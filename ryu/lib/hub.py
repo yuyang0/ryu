@@ -13,6 +13,7 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import absolute_import, print_function
 
 import logging
 import os
@@ -23,11 +24,14 @@ import netaddr
 # We don't bother to use cfg.py because monkey patch needs to be
 # called very early. Instead, we use an environment variable to
 # select the type of hub.
-HUB_TYPE = os.getenv('RYU_HUB_TYPE', 'eventlet')
+HUB_TYPE = os.getenv('RYU_HUB_TYPE', 'gevent')
+if HUB_TYPE.lower() not in ("eventlet", "gevent"):
+    raise OSError("unknown coroutine library %s." % HUB_TYPE)
 
 LOG = logging.getLogger('ryu.lib.hub')
 
 if HUB_TYPE == 'eventlet':
+    print("using eventlet.")
     import eventlet
     # HACK:
     # sleep() is the workaround for the following issue.
@@ -43,6 +47,8 @@ if HUB_TYPE == 'eventlet':
     import ssl
     import socket
     import traceback
+
+    from eventlet.wsgi import ALREADY_HANDLED
 
     getcurrent = eventlet.getcurrent
     patch = eventlet.monkey_patch
@@ -190,3 +196,107 @@ if HUB_TYPE == 'eventlet':
                     pass
 
             return self._cond
+
+elif HUB_TYPE == 'gevent':
+    print("using gevent.")
+    import sys
+    import warnings
+
+    import greenlet
+    import gevent
+    from gevent import socket
+    from gevent import sleep, getcurrent, kill, joinall, spawn, Timeout
+    from gevent.monkey import patch_all as patch
+    from gevent.lock import Semaphore, BoundedSemaphore
+    from gevent.queue import Queue, Empty as QueueEmpty
+    from gevent.server import StreamServer
+    from gevent.pywsgi import WSGIServer
+    from gevent.event import Event
+
+
+    def get_errno(exc):
+        """ Get the error code out of socket.error objects.
+        socket.error in <2.5 does not have errno attribute
+        socket.error in 3.x does not allow indexing access
+        e.args[0] works for all.
+        There are cases when args[0] is not errno.
+        i.e. http://bugs.python.org/issue6471
+        Maybe there are cases when errno is set, but it is not the first argument?
+        """
+
+        try:
+            if exc.errno is not None:
+                return exc.errno
+        except AttributeError:
+            pass
+        try:
+            return exc.args[0]
+        except IndexError:
+            return None
+
+
+    def connect(addr, family=socket.AF_INET, bind=None):
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        if bind is not None:
+            sock.bind(bind)
+        sock.connect(addr)
+        return sock
+
+
+    def listen(addr, family=socket.AF_INET, backlog=50, reuse_addr=True, reuse_port=None):
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        if reuse_addr and sys.platform[:3] != 'win':
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if family in (socket.AF_INET, socket.AF_INET6) and addr[1] == 0:
+            if reuse_port:
+                warnings.warn(
+                    '''listen on random port (0) with SO_REUSEPORT is dangerous.
+                    Double check your intent.
+                    Example problem: https://github.com/eventlet/eventlet/issues/411''',
+                    UserWarning, stacklevel=3)
+        elif reuse_port is None:
+            reuse_port = True
+        if reuse_port and hasattr(socket, 'SO_REUSEPORT'):
+            # NOTE(zhengwei): linux kernel >= 3.9
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            # OSError is enough on Python 3+
+            except (OSError, socket.error) as ex:
+                if get_errno(ex) in (22, 92):
+                    # A famous platform defines unsupported socket option.
+                    # https://github.com/eventlet/eventlet/issues/380
+                    # https://github.com/eventlet/eventlet/issues/418
+                    warnings.warn(
+                        '''socket.SO_REUSEPORT is defined but not supported.
+                        On Windows: known bug, wontfix.
+                        On other systems: please comment in the issue linked below.
+                        More information: https://github.com/eventlet/eventlet/issues/380''',
+                        UserWarning, stacklevel=3)
+
+        sock.bind(addr)
+        sock.listen(backlog)
+        return sock
+
+    spawn_after = gevent.spawn_later
+    TaskExit = greenlet.GreenletExit
+
+
+    class LoggingWrapper(object):
+        def write(self, message):
+            LOG.info(message.rstrip('\n'))
+
+    from ._gevent_websocket import WebSocketWSGI
+
+    class _AlreadyHandled(object):
+
+        def __iter__(self):
+            return self
+
+        def next(self):
+            raise StopIteration
+
+    __next__ = next
+
+
+    ALREADY_HANDLED = _AlreadyHandled()
+

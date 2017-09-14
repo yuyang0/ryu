@@ -108,7 +108,7 @@ class WebSocketRegistrationWrapper(object):
 
 class _AlreadyHandledResponse(Response):
     # XXX: Eventlet API should not be used directly.
-    from eventlet.wsgi import ALREADY_HANDLED
+    from ryu.lib.hub import ALREADY_HANDLED
     _ALREADY_HANDLED = ALREADY_HANDLED
 
     def __call__(self, environ, start_response):

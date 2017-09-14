@@ -21,8 +21,8 @@ import socket
 import struct
 import traceback
 from socket import IPPROTO_TCP, TCP_NODELAY
-from eventlet import semaphore
 
+from ryu.lib.hub import Semaphore
 from ryu.lib.packet import bgp
 from ryu.lib.packet.bgp import AS_TRANS
 from ryu.lib.packet.bgp import BGPMessage
@@ -105,7 +105,7 @@ class BgpProtocol(Protocol, Activity):
         self._recv_buff = b''
         self._socket = socket
         self._socket.setsockopt(IPPROTO_TCP, TCP_NODELAY, 1)
-        self._sendlock = semaphore.Semaphore()
+        self._sendlock = Semaphore()
         self._signal_bus = signal_bus
         self._holdtime = None
         self._keepalive = None
