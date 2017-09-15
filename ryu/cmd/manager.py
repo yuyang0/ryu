@@ -48,6 +48,8 @@ CONF.register_cli_opts([
                 '(use only for debugging)'),
     cfg.StrOpt('user-flags', default=None,
                help='Additional flags file for user applications'),
+    cfg.IntOpt('worker-processes', default=2,
+               help='Number of worker process'),
 ])
 
 
@@ -75,6 +77,9 @@ def main(args=None, prog=None):
     except cfg.ConfigFilesNotFoundError:
         CONF(args=args, prog=prog,
              project='ryu', version='ryu-manager %s' % version)
+
+    controller.get_listen_sock()
+    hub.fork_processes(CONF.worker_processes)
 
     log.init_log()
     logger = logging.getLogger(__name__)

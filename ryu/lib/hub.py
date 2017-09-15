@@ -20,6 +20,7 @@ import os
 
 import netaddr
 
+from .process import fork_processes, get_errno
 
 # We don't bother to use cfg.py because monkey patch needs to be
 # called very early. Instead, we use an environment variable to
@@ -29,6 +30,7 @@ if HUB_TYPE.lower() not in ("eventlet", "gevent"):
     raise OSError("unknown coroutine library %s." % HUB_TYPE)
 
 LOG = logging.getLogger('ryu.lib.hub')
+
 
 if HUB_TYPE == 'eventlet':
     print("using eventlet.")
@@ -214,27 +216,6 @@ elif HUB_TYPE == 'gevent':
     from gevent.event import Event
 
 
-    def get_errno(exc):
-        """ Get the error code out of socket.error objects.
-        socket.error in <2.5 does not have errno attribute
-        socket.error in 3.x does not allow indexing access
-        e.args[0] works for all.
-        There are cases when args[0] is not errno.
-        i.e. http://bugs.python.org/issue6471
-        Maybe there are cases when errno is set, but it is not the first argument?
-        """
-
-        try:
-            if exc.errno is not None:
-                return exc.errno
-        except AttributeError:
-            pass
-        try:
-            return exc.args[0]
-        except IndexError:
-            return None
-
-
     def connect(addr, family=socket.AF_INET, bind=None):
         sock = socket.socket(family, socket.SOCK_STREAM)
         if bind is not None:
@@ -297,6 +278,4 @@ elif HUB_TYPE == 'gevent':
 
     __next__ = next
 
-
     ALREADY_HANDLED = _AlreadyHandled()
-

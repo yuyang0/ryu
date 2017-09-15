@@ -21,7 +21,9 @@ The main component of OpenFlow controller.
 - Generate and route events to appropriate entities like Ryu applications
 
 """
+from __future__ import print_function
 
+import socket
 import contextlib
 from ryu import cfg
 import logging
@@ -78,6 +80,44 @@ CONF.register_opts([
 ])
 
 
+__listen_socks = None
+
+
+def get_listen_sock():
+    def _create_sock(address):
+        print("create listen sock: %s." % str(address))
+        sock = socket.socket()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(address)
+        except socket.error as ex:
+            strerror = getattr(ex, 'strerror', None)
+            if strerror is not None:
+                ex.strerror = strerror + ': ' + repr(address)
+            raise
+        sock.listen(50)
+        sock.setblocking(0)
+        return sock
+
+    global __listen_socks
+    if __listen_socks is not None:
+        return __listen_socks
+    __listen_socks = {}
+    port_list = []
+    if not CONF.ofp_tcp_listen_port and not CONF.ofp_ssl_listen_port:
+        port_list.append((ofproto_common.OFP_TCP_PORT_OLD, ofproto_common.OFP_SSL_PORT_OLD))
+        port_list.append((ofproto_common.OFP_TCP_PORT, ofproto_common.OFP_SSL_PORT))
+    else:
+        port_list.append((CONF.ofp_tcp_listen_port, CONF.ofp_ssl_listen_port))
+    for tcp_port, ssl_port in port_list:
+        if CONF.ctl_privkey is not None and CONF.ctl_cert is not None:
+            address = (CONF.ofp_listen_host, ssl_port)
+        else:
+            address = (CONF.ofp_listen_host, tcp_port)
+        __listen_socks[address] = _create_sock(address)
+    return __listen_socks
+
+
 class OpenFlowController(object):
     def __init__(self):
         super(OpenFlowController, self).__init__()
@@ -100,10 +140,12 @@ class OpenFlowController(object):
                          self.ofp_ssl_listen_port)
 
     def server_loop(self, ofp_tcp_listen_port, ofp_ssl_listen_port):
+        sock_map = get_listen_sock()
+
         if CONF.ctl_privkey is not None and CONF.ctl_cert is not None:
+            sock = sock_map[(CONF.ofp_listen_host, ofp_ssl_listen_port)]
             if CONF.ca_certs is not None:
-                server = StreamServer((CONF.ofp_listen_host,
-                                       ofp_ssl_listen_port),
+                server = StreamServer(sock,
                                       datapath_connection_factory,
                                       keyfile=CONF.ctl_privkey,
                                       certfile=CONF.ctl_cert,
@@ -111,15 +153,14 @@ class OpenFlowController(object):
                                       ca_certs=CONF.ca_certs,
                                       ssl_version=ssl.PROTOCOL_TLSv1)
             else:
-                server = StreamServer((CONF.ofp_listen_host,
-                                       ofp_ssl_listen_port),
+                server = StreamServer(sock,
                                       datapath_connection_factory,
                                       keyfile=CONF.ctl_privkey,
                                       certfile=CONF.ctl_cert,
                                       ssl_version=ssl.PROTOCOL_TLSv1)
         else:
-            server = StreamServer((CONF.ofp_listen_host,
-                                   ofp_tcp_listen_port),
+            sock = sock_map[(CONF.ofp_listen_host, ofp_tcp_listen_port)]
+            server = StreamServer(sock,
                                   datapath_connection_factory)
 
         # LOG.debug('loop')
