@@ -8,6 +8,14 @@ import multiprocessing
 LOG = logging.getLogger('ryu.lib.hub')
 
 
+def setproctitle(x):
+    try:
+        from setproctitle import setproctitle as _setproctitle
+        _setproctitle(x)
+    except ImportError:
+        pass
+
+
 def get_errno(exc):
     """ Get the error code out of socket.error objects.
     socket.error in <2.5 does not have errno attribute
@@ -81,6 +89,7 @@ def fork_processes(num_processes, max_restarts=100):
         pid = os.fork()
         if pid == 0:
             # child process
+            setproctitle("ryu worker")
             # _reseed_random()
             global _task_id
             _task_id = i
